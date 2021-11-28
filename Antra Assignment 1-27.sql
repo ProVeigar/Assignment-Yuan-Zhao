@@ -721,27 +721,45 @@ Read Uncommitted is the lowest level that has no lock on it. Transaction can dir
 The REPEATABLE READ is a higher isolation level that ensure the consistency between reads in same transaction. Under this condition, locks applied to prevent other locks before reader end the transaction. 
 The SERIALIZABLE is the highest level that prevent phantom reads of data that changed between the reads of transaction. This means lock are applied not only on the current rows if resource but also the future rows in the range of filter keys. 
 
-
-
-
 29.	Write a short essay, plus screenshots talking about performance tuning in SQL Server.
 Must include Tuning Advisor, Extended Events, DMV, Logs and Execution Plan.
 
+*/
 
 
 
 
 
-
+/*
 Assignments 30 - 32 are group assignments.
-
 30.	Write a short essay talking about a scenario: 
 Good news everyone! We (Wide World Importers) just brought out a small company called ¡°Adventure works¡±! 
 Now that bike shop is our sub-company. 
 The first thing of all works pending would be to merge the user logon information, 
 person information (including emails, phone numbers) and products (of course, add category, colors) to WWI database. 
 Include screenshot, mapping and query.
+*/
+SELECT p.FirstName+''+p.MiddleName+''+p.LastName as [FullName],
+p.LastName as [PreferredName] ,p.LastName as [SearchName],CASE WHEN he.LoginID  IS NULL THEN 0 ELSE 1 END as [IsPermittedToLogon], 
+he.LoginID as [LogonName],1 as [IsExternalLogonProvider],ppd.PasswordHash as [HashedPassword],1 as [IsSystemUser],
+he.CurrentFlag as [IsEmployee], CASE WHEN he.JobTitle='Sales Representative' THEN 1 ELSE 0 END as [IsSalesperson],
+null as [UserPreferences],ppe.PhoneNumber as [PhoneNumber], null as [FaxNumber],pea.EmailAddress as [EmailAddress]
+,null as [Photo],null as [CustomFields]
+INTO #temp
+FROM [Person].[Person] p 
+JOIN[Person].[Password] ppd on p.BusinessEntityID = ppd.BusinessEntityID
+JOIN[Person].[PersonPhone] ppe on p.BusinessEntityID = ppe.BusinessEntityID
+JOIN[Person].[EmailAddress] pea on p.BusinessEntityID=pea.BusinessEntityID
+JOIN[Person].[BusinessEntityAddress] bea on p.BusinessEntityID=bea.BusinessEntityID
+left JOIN [HumanResources].[Employee] he on p.BusinessEntityID=he.BusinessEntityID
 
+select * from #temp
+
+
+
+
+
+/*
 31.	Database Design: OLTP db design request for EMS business: 
 when people call 911 for medical emergency, 911 will dispatch UNITs to the given address. 
 A UNIT means a crew on an apparatus (Fire Engine, Ambulance, Medic Ambulance, Helicopter, EMS supervisor). 
@@ -772,37 +790,12 @@ CREATE TABLE Dimension.Manufacture
 	[Country] NVARCHAR(max) NOT NULL 
 	)
 CREATE PROCEDURE ETL
-(@input int)
+--(@input  )
 AS
  BEGIN 
- ;
- END
-
- INSERT INTO Integration.Order_Staging(
-      [Order Date Key]
-      ,[Picked Date Key]
-      ,[WWI Order ID]
-      ,[WWI Backorder ID]
-      ,[Description]
-      ,[Package]
-      ,[Quantity]
-      ,[Unit Price]
-      ,[Tax Rate]
-      --,[Total Excluding Tax]
-      ,[Tax Amount]
-     -- ,[Total Including Tax]
-      ,[WWI City ID]
-      ,[WWI Customer ID]
-      ,[WWI Stock Item ID]
-      ,[WWI Salesperson ID]
-      ,[WWI Picker ID]
-      ,[Last Modified When])
-	  select* from #temp
-DELETE FROM  Integration.Order_Staging  
-
 SELECT --wsc.PostalCityID
      -- ,wso.CustomerID
-     -- ,wsol.StockItemID
+     --wsol.StockItemID,
      -- ,
 	 wso.OrderDate
       ,wso.PickingCompletedWhen
@@ -831,5 +824,82 @@ JOIN [WideWorldImporters].[Sales].OrderLines wsol on wso.OrderID=wsol.OrderID
 JOIN [WideWorldImporters].[Sales].Invoices wsi on wsi.OrderID=wso.OrderID
 JOIN [WideWorldImporters].[Sales].InvoiceLines wsil on wsil.InvoiceID=wsi.InvoiceID
 
-select * from Integration.Order_Staging 
-drop table #temp
+INSERT INTO Integration.Order_Staging(
+      [Order Date Key]
+      ,[Picked Date Key]
+      ,[WWI Order ID]
+      ,[WWI Backorder ID]
+      ,[Description]
+      ,[Package]
+      ,[Quantity]
+      ,[Unit Price]
+      ,[Tax Rate]
+      ,[Tax Amount]
+      ,[WWI City ID]
+      ,[WWI Customer ID]
+      ,[WWI Stock Item ID]
+      ,[WWI Salesperson ID]
+      ,[WWI Picker ID]
+      ,[Last Modified When])
+	  select* from #temp
+--DELETE FROM  Integration.Order_Staging  
+--select * from Integration.Order_Staging 
+--drop table #temp
+MERGE [Dimension].[Stock Item] AS TARGET
+USING Integration.Order_Staging AS SOURCE 
+ON (TARGET.[WWI Stock Item ID] = SOURCE.[WWI Stock Item ID]) 
+--When records are matched, update the records if there is any change
+WHEN MATCHED 
+THEN UPDATE SET 
+TARGET.[WWI Stock Item ID] = SOURCE.[WWI Stock Item ID], TARGET.[Stock Item] = SOURCE. [Description]
+--When no records are matched, insert the incoming records from source table to target table
+WHEN NOT MATCHED  
+THEN INSERT ([WWI Stock Item ID],[Stock Item],,[Color],[Selling Package],[Buying Package],[Brand],[Size],[Lead Time Days],[Quantity Per Outer]
+      ,[Is Chiller Stock],[Barcode],[Tax Rate],[Unit Price],[Recommended Retail Price],[Typical Weight Per Unit],[Photo],[Valid From]
+      ,[Valid To],[Lineage Key])
+	  VALUES (SOURCE.[WWI Stock Item ID], SOURCE.[Description], S'N/A','ignore','ignore','ignore','ignore'
+      ,0,0,0,'ignore',0,0,0,0,0,GETDATE(),'9999-12-31 23:59:59.9999999',0)
+
+/*MERGE [City Key] AS TARGET
+USING  Integration.Order_Staging  
+ON (TARGET.[WWI City Key] = SOURCE.[City Key]) */
+/*MERGE [Customer Key] AS TARGET
+USING  Integration.Order_Staging  
+ON (TARGET.[WWI Customer Key] = SOURCE.[Customer Key]) */
+/*MERGG:[Stock Item Key],[Order Date Key],[Picked Date Key],[Salesperson Key],[Picker Key] on WWI Key */
+--Then UPDATE Integration.Order_Staging from above tables.
+--THEN MERGE Fact.Order
+MERGE [Fact].[Order] AS TARGET
+USING Integration.Order_Staging AS SOURCE 
+ON (TARGET.[WWI Stock Item ID] = SOURCE.[WWI Stock Item ID]) 
+--When records are matched, update the records if there is any change
+WHEN MATCHED 
+THEN UPDATE SET 
+TARGET.[City Key] = SOURCE.[City Key],
+TARGET.[Customer Key] = SOURCE. [Customer Key],
+TARGET.[Stock Item Key] = SOURCE. [Stock Item Key],
+TARGET.[Order Date Key] = SOURCE. [Order Date Key],
+TARGET.[Picked Date Key] = SOURCE. [Picked Date Key],
+TARGET.[Salesperson Key] = SOURCE. [Salesperson Key],
+TARGET.[Picker Key] = SOURCE. [Picker Key],
+TARGET.[WWI Order ID] = SOURCE. [WWI Order ID],
+TARGET.[WWI Backorder ID] = SOURCE. [WWI Backorder ID],
+TARGET.[Description] = SOURCE. [Description],
+TARGET.[Package] = SOURCE. [Package],
+TARGET.[Quantity] = SOURCE. [Quantity],
+TARGET.[Unit Price] = SOURCE. [Unit Price],
+TARGET.[Tax Rate] = SOURCE. [Tax Rate],
+TARGET.[Total Excluding Tax] = SOURCE. [Total Excluding Tax],
+TARGET.[Tax Amount] = SOURCE. [Tax Amount],
+TARGET.[Total Including Tax] = SOURCE. [Total Including Tax],
+TARGET.[Lineage Key] = SOURCE. [Lineage Key],
+--When no records are matched, insert the incoming records from source table to target table
+WHEN NOT MATCHED  
+THEN INSERT ([City Key],[Customer Key],[Stock Item Key],[Order Date Key],[Picked Date Key],[Salesperson Key],[Picker Key]
+      ,[WWI Order ID],[WWI Backorder ID],[Description],[Package],[Quantity],[Unit Price],[Tax Rate],[Total Excluding Tax]
+      ,[Tax Amount],[Total Including Tax],[Lineage Key])
+	  VALUES (SOURCE.[City Key],SOURCE.[Customer Key],SOURCE.[Stock Item Key],SOURCE.[Order Date Key],SOURCE.[Picked Date Key],SOURCE.[Salesperson Key],
+	  SOURCE.[Picker Key],SOURCE.[WWI Order ID],SOURCE.[WWI Backorder ID],SOURCE.[Description],SOURCE.[Package],SOURCE.[Quantity],SOURCE.[Unit Price],SOURCE.[Tax Rate],
+	  SOURCE.[Total Excluding Tax],SOURCE.[Tax Amount],SOURCE.[Total Including Tax],SOURCE.[Lineage Key])
+ END
+
