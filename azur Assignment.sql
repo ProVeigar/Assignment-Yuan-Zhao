@@ -326,7 +326,7 @@ CREATE PROCEDURE getFromDate
 AS
 BEGIN TRY
  BEGIN TRANSACTION
- IF (@dateinput NOT IN (SELECT do.orderDate FROM dbo.Orders do ))
+ IF (@dateinput NOT IN (SELECT isnull(orderDate,cast('1111-01-01' as date)) FROM dbo.Orders ))
   BEGIN
   INSERT INTO dbo.Orders(orderId ,orderDate ,orderTotal,customerId )
   SELECT  so.OrderID,so.OrderDate,[dbo].[OrderTotal](so.OrderID),so.CustomerID
@@ -831,4 +831,5 @@ JOIN [WideWorldImporters].[Sales].OrderLines wsol on wso.OrderID=wsol.OrderID
 JOIN [WideWorldImporters].[Sales].Invoices wsi on wsi.OrderID=wso.OrderID
 JOIN [WideWorldImporters].[Sales].InvoiceLines wsil on wsil.InvoiceID=wsi.InvoiceID
 
+select * from Integration.Order_Staging 
 drop table #temp
