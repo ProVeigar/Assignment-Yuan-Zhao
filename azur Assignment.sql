@@ -11,7 +11,7 @@ order by PersonID
 
 /*2.If the customer's primary contact person has the same phone number as the customer¡¯s phone number,
     list the customer companies.  */
-	select s.CustomerName,s.CustomerID,a.FullName 
+	select s.CustomerName as CompanyName,s.CustomerID,a.FullName,s.PhoneNumber,a.PhoneNumber 
 	from Sales.Customers s join Application.People a on s.PrimaryContactPersonID=a.PersonID 
 	and s.PhoneNumber=a.PhoneNumber 
 	
@@ -155,8 +155,9 @@ order by CityName,ValidFrom
 	 AP.FullName,
 	 SC.PhoneNumber
 
-/*13.List of stock item groups and total quantity purchased, -- ask: 1:group by stockitem or group by stockitemGroups 2: is order outers the purchaseed amount
+/*13.List of stock item groups and total quantity purchased, 
      total quantity sold, and the remaining stock quantity (quantity purchased ¨C quantity sold)*/
+	 -- ask: 1:group by stockitem or group by stockitemGroups 2: is order outers the purchaseed amount
 	 SELECT SIP.StockItemID,SIP.QuantityPurchased,SIS.QuantitySold,SIP.QuantityPurchased-SIS.QuantitySold as Remaining,WSG.StockGroupName
 	 FROM(
 	 select pol.StockItemID,SUM(pol.ReceivedOuters) as QuantityPurchased
@@ -173,18 +174,21 @@ order by CityName,ValidFrom
 
 --14.	List of Cities in the US and the stock item that the city got the most deliveries in 2016. 
 --      If the city did not purchase any stock items in 2016, print ¡°No Sales¡±.
-SELECT SumQuantity.CityName,SumQuantity.StockItemID,MAX(SumQuantity.qua) as Quantity
-FROM(SELECT ac.CityName,sil.StockItemID, SUM(sil.Quantity) as qua
+SELECT SumQuantity.CityName,ISNULL(SumQuantity.Description, 'No Sales' )as StockItem,ISNULL(MAX(SumQuantity.qua),0) as Quantity
+FROM Application.Cities Apc left join(SELECT ac.CityName,ac.CityID,sil.Description, SUM(sil.Quantity) as qua
 FROM Sales.Customers FOR SYSTEM_TIME AS OF '2016-12-31' SC 
      JOIN Sales.Invoices SI on sc.CustomerID=SI.CustomerID
 	 JOIN Sales.InvoiceLines SIL on si.InvoiceID=sil.InvoiceID
      JOIN Application.Cities AC on sc.DeliveryCityID=ac.CityID
 	 WHERE YEAR(SI.ConfirmedDeliveryTime)= YEAR('2016-1-1')
-	 Group by ac.CityName,sil.StockItemID
-)as SumQuantity
-Group by SumQuantity.CityName,SumQuantity.StockItemID;
+	 Group by ac.CityName,ac.CityID,sil.Description
+)as SumQuantity on apc.CityID=SumQuantity.CityID
+Group by SumQuantity.CityName,SumQuantity.Description
+order by CityName
 
---15.	List any orders that had more than one delivery attempt (located in invoice table). --ASK: what indicate more than one attempt
+
+--15.	List any orders that had more than one delivery attempt (located in invoice table). \
+--ASK: what indicate more than one attempt
 Select  SI.OrderID, json_value(SI.ReturnedDeliveryData,'$.Events[1].Comment') as comment
 from sales.Invoices SI
 where json_value(SI.ReturnedDeliveryData,'$.Events[1].Comment')  IS NOT NULL;
@@ -234,6 +238,8 @@ CREATE VIEW StockGroupSoldByYear AS
 		PIVOT (SUM(QUANTITY) FOR YR in ('+ @columns +')
 		) as pvt;';
 EXECUTE sp_executesql @sql;
+Select *
+		From [dbo].[StockGroupSoldByYear]
 --b.create by list out columns
 CREATE VIEW StockGroupSoldByYear AS 
 SELECT* FROM(
@@ -251,6 +257,7 @@ SELECT* FROM(
 		From [dbo].[StockGroupSoldByYear]
 
 --19.	Create a view that shows the total quantity of stock items of each stock group sold (in orders) by year 2013-2017. [Year, Stock Group Name1, Stock Group Name2, Stock Group Name3, ¡­ , Stock Group Name10] 
+DROP VIEW StockGroupSoldByName
 DECLARE 
     @columns NVARCHAR(MAX) = '', 
     @sql     NVARCHAR(MAX) = '';
@@ -276,19 +283,7 @@ CREATE VIEW StockGroupSoldByName AS
 	) t
 	Pivot( SUM(QUANTITY) For StockGroupName in ('+ @columns +')) pvt';
 EXECUTE sp_executesql @sql;
-DROP VIEW StockGroupSoldByName
-CREATE VIEW StockGroupSoldByName AS (
-Select * from
-(SELECT sg.StockGroupName,YEAR(so.OrderDate) as YR ,SOL.Quantity as QUANTITY
-		FROM 
-		Sales.OrderLines SOL
-		JOIN Sales.Orders SO on SO.OrderID=sol.OrderID
-		JOIN Warehouse.StockItemStockGroups SIG on SIG.StockItemID=sol.StockItemID 
-		JOIN Warehouse.StockGroups SG on SG.StockGroupID=SIG.StockGroupID
-	) t
-	Pivot( SUM(QUANTITY) For StockGroupName in ([Novelty Items],[Clothing],[Mugs],[T-Shirts],[Airline Novelties],
-	[Computing Novelties],[USB Novelties],[Furry Footwear],[Toys],[Packaging Materials])) pvt
-	)
+
 
 	Select *
 		From [dbo].[StockGroupSoldByName]
@@ -303,7 +298,6 @@ CREATE FUNCTION OrderTotal (
 RETURNS nvarchar(50) AS 
 BEGIN
 --DECLARE @return_value nvarchar(50);
-	 
  RETURN
  (Select SUM(SOL.Quantity * SOL.UnitPrice) FROM Sales.OrderLines SOL
   WHERE sol.OrderID=@OrderId
@@ -319,13 +313,13 @@ FROM sales.Invoices si
    and save the information (order id, order date, order total, customer id) into the new table. 
    If a given date is already existing in the new table, throw an error and roll back. Execute the stored procedure 5 times using different dates. 
 */
+DROP TABLE dbo.Orders
 Create table dbo.Orders(
     orderId int,
     orderDate Date,
     orderTotal varchar(255),
 	customerId int
 )
-DROP TABLE dbo.Orders
 Drop PROCEDURE getFromDate;
 CREATE PROCEDURE getFromDate
 (@dateinput DATE)
@@ -352,7 +346,7 @@ BEGIN CATCH
 END CATCH
 
 EXEC getFromDate @dateinput = '2013-1-2' 
-
+select * from dbo.Orders
 DELETE FROM dbo.Orders
 
 /*22.	Create a new table called ods.StockItem. It has following columns: 
@@ -427,42 +421,47 @@ ADD PERIOD FOR SYSTEM_TIME (TimeStart,TimeEnd);
 -- Turn on system versioning
 ALTER TABLE ods.StockItem
 SET (SYSTEM_VERSIONING = ON (HISTORY_TABLE = ods.StockItemHistory, DATA_CONSISTENCY_CHECK = ON));
-
+Select * FROM ods.StockItem
 DELETE FROM ods.StockItem
 /*
 23.	Rewrite your stored procedure in (21). 
 Now with a given date, it should wipe out all the order data
 prior to the input date and load the order data that was placed in the next 7 days following the input date.
 */
-
+Create table dbo.Orders(
+    orderId int,
+    orderDate Date,
+    orderTotal varchar(255),
+	customerId int
+)
 Drop PROCEDURE get7FromDate;
 CREATE PROCEDURE get7FromDate
 (@dateinput DATE)
 AS
 BEGIN TRY
- BEGIN TRANSACTION
- IF (@dateinput NOT IN (SELECT MIN(orderDate) FROM dbo.Orders ))
+ IF (@dateinput !=isnull((SELECT MIN(orderDate) FROM dbo.Orders ),cast('1111-01-01' as date)) )
   BEGIN
+  BEGIN TRANSACTION
   DELETE FROM dbo.Orders  
   WHERE OrderDate < @dateinput;
   INSERT INTO dbo.Orders(orderId ,orderDate ,orderTotal,customerId )
   SELECT  so.OrderID,so.OrderDate,[dbo].[OrderTotal](so.OrderID),so.CustomerID
   FROM sales.Orders so
-  WHERE so.OrderDate BETWEEN @dateinput AND DATEADD(DAY, 7, @dateinput);
+  WHERE so.OrderDate BETWEEN DATEADD(DAY, 1, @dateinput) AND DATEADD(DAY, 7, @dateinput);
   COMMIT TRANSACTION
   END
 ELSE 
 BEGIN
-  RAISERROR ('Date already inserted',16, 1)
+  RAISERROR ('Date already inserted',16, 1) 
  END
  END TRY
 BEGIN CATCH
   Print ERROR_MESSAGE()
   Print 'transaction rolled back'
-  ROLLBACK TRANSACTION
+  --ROLLBACK TRANSACTION
 END CATCH
 
-EXEC getFromDate @dateinput = '2013-1-1' 
+EXEC get7FromDate @dateinput = '2013-1-1' 
 EXEC get7FromDate @dateinput = '2013-1-2' 
 
  DELETE  FROM dbo.Orders 
@@ -470,6 +469,7 @@ EXEC get7FromDate @dateinput = '2013-1-2'
 DELETE FROM dbo.Orders
 select *
 from dbo.Orders 
+order by orderDate
 
 /*24.	Consider the JSON file:
 
@@ -519,6 +519,26 @@ Looks like that it is our missed purchase orders.
 Migrate these data into Stock Item, Purchase Order and Purchase Order Lines tables. Of course, save the script.
 
 */
+drop table #temp
+Create Table #temp(
+  StockItemName    NVARCHAR(100) ,
+         SupplierID       int           ,
+         UnitPackageId    int           ,
+         OuterPackageId   int ,
+         Brand            NVARCHAR(50)  ,
+         LeadTimeDays     int           ,
+         QuantityPerOuter int           ,
+         TaxRate          DECIMAL(18,3) ,
+         UnitPrice        DECIMAL(18,2) ,
+         RecommendedRetailPrice DECIMAL(18,2) ,
+         TypicalWeightPerUnit   DECIMAL(18,3) ,
+         CustomFields     NVARCHAR(max)  ,
+         Tags             NVARCHAR(max)  ,
+         OrderDate        DATE           ,
+         DeliveryMethod   NVARCHAR(50)   ,
+         ExpectedDeliveryDate DATE       ,
+         SupplierReference NVARCHAR(20)  
+)
 DECLARE @PurchaseOrder NVARCHAR(max) = N'{
  
      "PurchaseOrders":[ {
@@ -554,45 +574,75 @@ DECLARE @PurchaseOrder NVARCHAR(max) = N'{
          "TypicalWeightPerUnit":"0.5",
          "CountryOfManufacture":"Canada",
          "Range":"Adult",
-         "OrderDate":"2018-01-025",
+         "OrderDate":"2018-01-25",
          "DeliveryMethod":"Post",
          "ExpectedDeliveryDate":"2018-02-02",
          "SupplierReference":"269622390"
       }]}'
-	 DECLARE @temp NVARCHAR(max)  
-	  SELECT @temp= OuterPackageId FROM OPENJSON (@PurchaseOrder)
-      WITH (OuterPackageId NVARCHAR(max) '$.PurchaseOrders[0].OuterPackageId' as Json)
-	  Print @temp
-	  Select * FROM OPENJSON (@temp)
-	  WITH (OuterPackageId NVARCHAR(max))
-	  Print STRING_AGG(@temp, '')
+DECLARE @path NVARCHAR(max)  ='$.PurchaseOrders.OuterPackageId'
+DECLARE @pathN int =0
+SET @path ='$.PurchaseOrders['+cast(@pathN as NVARCHAR)+']'
 
-IF ((SELECT* FROM OPENJSON (@PurchaseOrder)
-      WITH (OuterPackageId int '$.PurchaseOrders[0].OuterPackageId')) is NULL)
-  SELECT* FROM OPENJSON (@PurchaseOrder)
-      WITH (OuterPackageId NVARCHAR(50) '$.PurchaseOrders[0].OuterPackageId')
+WHILE (ISJSON(JSON_QUERY(@PurchaseOrder,@path))=1)
+BEGIN 
+DECLARE @arr int= 0
+IF(JSON_QUERY(@PurchaseOrder,@path+'.OuterPackageId') is NOT NULL)
+BEGIN
+SELECT
+    @arr= @arr*10+CAST(a.[VALUE] as int)
+FROM (SELECT  [VALUE]  FROM OPENJSON (@PurchaseOrder, @path+'.OuterPackageId'))as a
+END
 
- SELECT* 
- FROM OPENJSON (@PurchaseOrder)
- WITH (
-         StockItemName    NVARCHAR(100) '$.StockItemName',
-         SupplierID       int           '$.Supplier',
-         UnitPackageId    int           '$.UnitPackageId',
-         OuterPackageId   int           '$.OuterPackageId',
-         Brand            NVARCHAR(50)  '$.Brand',
-         LeadTimeDays     int           '$.LeadTimeDays',
-         QuantityPerOuter int           '$.QuantityPerOuter',
-         TaxRate          DECIMAL(18,3) '$.TaxRate',
-         UnitPrice        DECIMAL(18,2) '$.UnitPrice',
-         RecommendedRetailPrice DECIMAL(18,2) '$.RecommendedRetailPrice',
-         TypicalWeightPerUnit   DECIMAL(18,3) '$.TypicalWeightPerUnit',
-         CustomFields     NVARCHAR(max)  '$.CountryOfManufacture',
-         Tags             NVARCHAR(max)  '$.Range',
-         OrderDate        DATE           '$.OrderDate',
-         DeliveryMethod   NVARCHAR(50)   '$.DeliveryMethod',
-         ExpectedDeliveryDate DATE       '$.ExpectedDeliveryDate',
-         SupplierReference NVARCHAR(20)  '$.SupplierReference'
- )
+insert into #temp (StockItemName,SupplierID,UnitPackageId,OuterPackageId,
+         Brand,LeadTimeDays,QuantityPerOuter,TaxRate,UnitPrice,RecommendedRetailPrice,
+         TypicalWeightPerUnit,CustomFields,Tags,OrderDate,DeliveryMethod,
+		 ExpectedDeliveryDate,SupplierReference) 
+		 VALUES(
+		 JSON_VALUE(@PurchaseOrder,@path+'.StockItemName'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.Supplier'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.UnitPackageId'),
+		 iif(@arr=0,(JSON_VALUE(@PurchaseOrder,@path+'.OuterPackageId')),@arr),		 
+		 JSON_VALUE(@PurchaseOrder,@path+'.Brand'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.LeadTimeDays'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.QuantityPerOuter'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.TaxRate'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.UnitPrice'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.RecommendedRetailPrice'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.TypicalWeightPerUnit'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.CountryOfManufacture'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.Range'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.OrderDate'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.DeliveryMethod'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.ExpectedDeliveryDate'),
+		 JSON_VALUE(@PurchaseOrder,@path+'.SupplierReference')
+		 )
+	SET	 @pathN= @pathN +1
+	SET @path ='$.PurchaseOrders['+cast(@pathN as NVARCHAR)+']'
+END
+select * from #temp
+delete from [Warehouse].[PackageTypes] where [PackageTypeID]=69
+INSERT INTO [Warehouse].[PackageTypes]([PackageTypeID],[PackageTypeName],[LastEditedBy])
+VALUES (67,'Yuan',1)
+INSERT INTO  warehouse.stockItems( StockItemName, SupplierID, 
+	UnitPackageID, OuterPackageID, Brand, LeadTimeDays, QuantityPerOuter,IsChillerStock,
+	TaxRate, UnitPrice, RecommendedRetailPrice, TypicalWeightPerUnit, 
+	CustomFields,LastEditedBy)
+	SELECT t.StockItemName+'('+CAST(t.SupplierID as NVARCHAR(20) )+')',t.SupplierID,t.UnitPackageId,t.OuterPackageId,t.Brand,t.LeadTimeDays,
+	t.QuantityPerOuter,0,t.TaxRate,t.UnitPrice,t.RecommendedRetailPrice,t.TypicalWeightPerUnit,NULL,1
+	FROM #temp as t
+
+	INSERT INTO Purchasing.PurchaseOrders( SupplierID, OrderDate, DeliveryMethodID, ContactPersonID, 
+	SupplierReference, IsOrderFinalized, LastEditedBy)
+	SELECT t.SupplierID,t.OrderDate,1,ps.PrimaryContactPersonID,t.SupplierReference,1,1
+	FROM #temp as t 
+	join [Purchasing].[Suppliers] ps on t.SupplierID=ps.SupplierID
+	
+	
+	INSERT INTO Purchasing.PurchaseOrderLines(PurchaseOrderID, StockItemID, OrderedOuters,[Description],
+	ReceivedOuters, PackageTypeID, IsOrderLineFinalized, LastEditedBy)
+	SELECT ps.PurchaseOrderID,228,t.OuterPackageId,t.StockItemName,t.QuantityPerOuter,1,1,1
+	FROM #temp as t 
+	join [Purchasing].PurchaseOrders ps on t.OrderDate=ps.OrderDate
 
 /*
 25.	Revisit your answer in (19). Convert the result in JSON string and save it to the server using TSQL FOR JSON PATH.
@@ -652,6 +702,7 @@ EXEC forge @dateinput = @StarDate
 end 
 SET @StarDate = DATEADD(DAY,1,@StarDate)
 END
+select * from ods.ConfirmedDeviveryJson
  
 /*
 
